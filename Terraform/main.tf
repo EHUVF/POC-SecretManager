@@ -77,7 +77,7 @@ resource "aws_iam_role" "github_actions_role" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringLike = {
-          "token.actions.githubusercontent.com:sub": "repo:bayer-int/POC-SecretManager-NET-4.8.1:*"
+          "token.actions.githubusercontent.com:sub": "repo:EHUVF/POC-SecretManager:*"
         }
       }
     }]
