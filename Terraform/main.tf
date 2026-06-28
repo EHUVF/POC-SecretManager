@@ -1,72 +1,21 @@
-# 1. Configuração do Provedor AWS
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
 provider "aws" {
   region  = "us-east-1"
-  profile = "default" # Isso força o Terraform a olhar para o seu arquivo ~/.aws/credentials
+  profile = "default"
 }
 
-# 2. Repositório ECR
+# 1. Repositório ECR
 resource "aws_ecr_repository" "poc_app_db_secrets_repo" {
-  name                 = "poc-app-db-secrets-repo"
-  image_tag_mutability = "MUTABLE"
-  image_scanning_configuration {
-    scan_on_push = true
-  }
+  name = "poc-app-db-secrets-repo"
 }
 
-# 3. Segredo no Secrets Manager
-resource "aws_secretsmanager_secret" "poc_db_secret" {
-  name                    = "POC-DBSecret"
-  recovery_window_in_days = 7
-}
-
-resource "aws_secretsmanager_secret_version" "poc_db_secret_version" {
-  secret_id     = aws_secretsmanager_secret.poc_db_secret.id
-  secret_string = "Hello World! Conteúdo do Secret."
-}
-
-# 4. Role da Aplicação (Task Role - "Crachá do container")
-resource "aws_iam_role" "app_task_role" {
-  name = "poc-app-task-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action = "sts:AssumeRole"
-      Effect = "Allow"
-      Principal = { Service = "ecs-tasks.amazonaws.com" }
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "read_secret_policy" {
-  name = "poc-read-secret-policy"
-  role = aws_iam_role.app_task_role.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action   = ["secretsmanager:GetSecretValue"]
-      Effect   = "Allow"
-      Resource = [aws_secretsmanager_secret.poc_db_secret.arn]
-    }]
-  })
-}
-
-# 5. OIDC: Confiança entre GitHub e AWS
+# 2. Provedor OIDC para o GitHub
 resource "aws_iam_openid_connect_provider" "github_actions" {
-  url            = "https://token.actions.githubusercontent.com"
-  client_id_list = ["sts.amazonaws.com"]
-  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"] 
+  url             = "https://token.actions.githubusercontent.com"
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = ["d89e3bd43d5d909b47a18977aa9d5ce36cee184c"]
 }
 
-# 6. Role do GitHub Actions (A "esteira")
+# 3. Role para o GitHub Actions
 resource "aws_iam_role" "github_actions_role" {
   name = "poc-github-actions-role"
   assume_role_policy = jsonencode({
@@ -84,17 +33,59 @@ resource "aws_iam_role" "github_actions_role" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "ecr_power_user" {
-  role       = aws_iam_role.github_actions_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
+# 4. Permissões da Role do GitHub
+resource "aws_iam_role_policy" "github_deploy_policy" {
+  role = aws_iam_role.github_actions_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = [
+        "ecr:GetAuthorizationToken",
+        "ecr:BatchCheckLayerAvailability",
+        "ecr:PutImage",
+        "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload",
+        "ecs:UpdateService",
+        "ecs:DescribeServices"
+      ]
+      Effect   = "Allow"
+      Resource = "*"
+    }]
+  })
 }
 
-# 7. Outputs para consulta
-output "ecr_repository_url" {
-  value = aws_ecr_repository.poc_app_db_secrets_repo.repository_url
+# 5. ECS Cluster
+resource "aws_ecs_cluster" "poc_cluster" {
+  name = "poc-cluster"
 }
 
-output "github_role_arn" {
-  description = "ARN que você deve colar no seu deploy.yml"
-  value       = aws_iam_role.github_actions_role.arn
+# 6. ECS Task Definition
+resource "aws_ecs_task_definition" "poc_task" {
+  family                   = "poc-task"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  cpu                      = "256"
+  memory                   = "512"
+  execution_role_arn       = "arn:aws:iam::263611243832:role/ecsTaskExecutionRole" # Role padrão do ECS
+
+  container_definitions = jsonencode([{
+    name  = "poc-container"
+    image = "${aws_ecr_repository.poc_app_db_secrets_repo.repository_url}:latest"
+    portMappings = [{ containerPort = 80 }]
+  }])
+}
+
+# 7. ECS Service
+resource "aws_ecs_service" "poc_service" {
+  name            = "poc-service"
+  cluster         = aws_ecs_cluster.poc_cluster.id
+  task_definition = aws_ecs_task_definition.poc_task.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = ["subnet-001b8db286dc31ae8"] # A subnet que validamos
+    assign_public_ip = true
+  }
 }
