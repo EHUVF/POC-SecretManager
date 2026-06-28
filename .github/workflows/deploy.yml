@@ -1,0 +1,45 @@
+name: Deploy POC App
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT: 745364136706
+  ECR_REPOSITORY: poc-app-db-secrets-repo # O nome que definimos no Terraform
+  IMAGE_NAME: app-db-secrets-poc
+
+permissions:
+  contents: read
+  id-token: write # Necessário para o OIDC assumir a Role da Bayer
+
+jobs:
+  deploy:
+    runs-on: windows-latest # Usamos o runner padrão do GitHub
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 1. Autenticação usando a Role homologada da Bayer
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{env.AWS_ACCOUNT}}:role/SC-745364136706-pp-fljbn32a2uoju-Role-D1QA6ZS0U1A3
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 2. Login no ECR
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 3. Build da imagem
+      - name: Build Docker Image
+        run: |
+          docker build -t ${{ env.ECR_REPOSITORY }} .
+
+      # 4. Tag e Push para o ECR
+      - name: Push to ECR
+        run: |
+          docker tag ${{ env.ECR_REPOSITORY }}:latest ${{ env.AWS_ACCOUNT }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
+          docker push ${{ env.AWS_ACCOUNT }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
