@@ -1,14 +1,63 @@
-# 2. Setup .NET SDK (essencial para rodar comandos dotnet)
-- name: Setup .NET
-  uses: actions/setup-dotnet@v4
-  with:
-    dotnet-version: 8.0.x # Ajuste para a versão que seu projeto usa
+name: Deploy Final POC
 
-# 3. Restaurar pacotes (substitui o NuGet restore)
-- name: Restore dependencies
-  run: dotnet restore
+on:
+  push:
+    branches: [main]
 
-# 4. Compilar o projeto
-- name: Build Project
-  run: |
-    dotnet publish -c Release -o bin/publish
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT: 263611243832
+  ECR_REPOSITORY: poc-app-db-secrets-repo
+  CLUSTER_NAME: poc-cluster
+  SERVICE_NAME: poc-service
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 1. Autenticação via OIDC
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::263611243832:role/poc-github-actions-role
+          aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
+
+      # 2. Setup .NET SDK (essencial para dotnet restore e publish)
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      # 3. Restaurar dependências
+      - name: Restore dependencies
+        run: dotnet restore
+
+      # 4. Compilar e Publicar o projeto
+      # O output será gerado em bin/publish
+      - name: Build and Publish
+        run: dotnet publish -c Release -o bin/publish
+
+      # 5. Login no ECR
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 6. Build e Push da imagem
+      # O Dockerfile agora deve copiar de bin/publish/
+      - name: Build, Tag, and Push to ECR
+        run: |
+          docker build -t ${{ env.ECR_REPOSITORY }} .
+          docker tag ${{ env.ECR_REPOSITORY }}:latest ${{ env.AWS_ACCOUNT }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
+          docker push ${{ env.AWS_ACCOUNT }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
+
+      # 7. Deploy no ECS
+      - name: Deploy to Amazon ECS
+        run: |
+          aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.SERVICE_NAME }} --force-new-deployment
