@@ -30,29 +30,34 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
           audience: sts.amazonaws.com
 
-      # 2. Setup MSBuild para compilar o .NET Framework
+      # 2. Setup MSBuild e NuGet
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # 3. Compilar o projeto (Sem .sln, apontamos para o .csproj ou pasta)
-      # Se o seu projeto estiver em uma pasta específica, troque o '.' pelo caminho
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      # 3. Restaurar pacotes NuGet (ESSENCIAL PARA GERAR O ASSETS FILE)
+      - name: Restore NuGet Packages
+        run: nuget restore
+
+      # 4. Compilar o projeto
       - name: Build Project
         run: |
           msbuild . /p:Configuration=Release /p:OutputPath=bin/ /p:DeployOnBuild=true /p:WebPublishMethod=FileSystem /p:publishUrl=bin/publish
 
-      # 4. Login no ECR
+      # 5. Login no ECR
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 5. Build e Push da imagem
-      # Agora o Docker encontrará a pasta bin/ gerada pelo MSBuild
+      # 6. Build e Push da imagem
       - name: Build, Tag, and Push to ECR
         run: |
           docker build -t ${{ env.ECR_REPOSITORY }} .
           docker tag ${{ env.ECR_REPOSITORY }}:latest ${{ env.AWS_ACCOUNT }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
           docker push ${{ env.AWS_ACCOUNT }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
 
-      # 6. Deploy no ECS
+      # 7. Deploy no ECS
       - name: Deploy to Amazon ECS
         run: |
           aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.SERVICE_NAME }} --force-new-deployment
