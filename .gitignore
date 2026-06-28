@@ -1,0 +1,10 @@
+[Bb]in/
+[Oo]bj/
+.vs/
+*.user
+*.suo
+*.bak
+*.tmp
+*.log
+packages/
+project.assets.json
