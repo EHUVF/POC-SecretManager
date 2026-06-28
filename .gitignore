@@ -8,3 +8,9 @@
 *.log
 packages/
 project.assets.json
+# Pastas e arquivos gerados pelo Terraform
+Terraform/.terraform/
+Terraform/.terraform.lock.hcl
+Terraform/terraform.tfstate
+Terraform/terraform.tfstate.backup
+Terraform/.terraform.tfstate.lock.info

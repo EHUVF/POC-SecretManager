@@ -1,4 +1,4 @@
-# Configure o provider da AWS
+# 1. Configuração do Provedor AWS
 terraform {
   required_providers {
     aws = {
@@ -9,51 +9,31 @@ terraform {
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region  = "us-east-1"
+  profile = "default" # Isso força o Terraform a olhar para o seu arquivo ~/.aws/credentials
 }
 
-# Cria um repositório no ECR
+# 2. Repositório ECR
 resource "aws_ecr_repository" "poc_app_db_secrets_repo" {
   name                 = "poc-app-db-secrets-repo"
   image_tag_mutability = "MUTABLE"
-
   image_scanning_configuration {
     scan_on_push = true
   }
-
-  tags = {
-    Name = "poc-app-db-secrets-repo"
-  }
 }
 
-# Cria um segredo no AWS Secrets Manager
+# 3. Segredo no Secrets Manager
 resource "aws_secretsmanager_secret" "poc_db_secret" {
   name                    = "POC-DBSecret"
   recovery_window_in_days = 7
-
-  tags = {
-    Name = "POC-DBSecret"
-  }
 }
 
-# Adiciona uma versão inicial do segredo
 resource "aws_secretsmanager_secret_version" "poc_db_secret_version" {
   secret_id     = aws_secretsmanager_secret.poc_db_secret.id
-  secret_string = "Hello World! Eu sou o conteúdo do Secret!"
+  secret_string = "Hello World! Conteúdo do Secret."
 }
 
-# Outputs
-output "ecr_repository_url" {
-  description = "URL do repositório ECR"
-  value       = aws_ecr_repository.poc_app_db_secrets_repo.repository_url
-}
-
-output "secret_arn" {
-  description = "ARN do segredo no Secrets Manager"
-  value       = aws_secretsmanager_secret.poc_db_secret.arn
-}
-
-# 1. A Role que o Fargate vai assumir (O "crachá")
+# 4. Role da Aplicação (Task Role - "Crachá do container")
 resource "aws_iam_role" "app_task_role" {
   name = "poc-app-task-role"
   assume_role_policy = jsonencode({
@@ -66,7 +46,6 @@ resource "aws_iam_role" "app_task_role" {
   })
 }
 
-# 2. Permissão específica para ler o seu segredo
 resource "aws_iam_role_policy" "read_secret_policy" {
   name = "poc-read-secret-policy"
   role = aws_iam_role.app_task_role.id
@@ -75,20 +54,19 @@ resource "aws_iam_role_policy" "read_secret_policy" {
     Statement = [{
       Action   = ["secretsmanager:GetSecretValue"]
       Effect   = "Allow"
-      Resource = ["${aws_secretsmanager_secret.poc_db_secret.arn}"]
+      Resource = [aws_secretsmanager_secret.poc_db_secret.arn]
     }]
   })
 }
 
-# 1. OIDC Provider: "AWS, confie no GitHub"
+# 5. OIDC: Confiança entre GitHub e AWS
 resource "aws_iam_openid_connect_provider" "github_actions" {
   url            = "https://token.actions.githubusercontent.com"
   client_id_list = ["sts.amazonaws.com"]
-  # Thumbprint do GitHub Actions (padronizado)
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"] 
 }
 
-# 2. Role que o GitHub vai assumir (O "crachá" para a esteira)
+# 6. Role do GitHub Actions (A "esteira")
 resource "aws_iam_role" "github_actions_role" {
   name = "poc-github-actions-role"
   assume_role_policy = jsonencode({
@@ -99,16 +77,24 @@ resource "aws_iam_role" "github_actions_role" {
       Action = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringLike = {
-          # AQUI ESTÁ O AJUSTE DO SEU REPOSITÓRIO:
-          "token.actions.githubusercontent.com:sub": "repo:EHUVF/POC-SecretManager:*"
+          "token.actions.githubusercontent.com:sub": "repo:bayer-int/POC-SecretManager-NET-4.8.1:*"
         }
       }
     }]
   })
 }
 
-# 3. Permissão para o GitHub fazer push no seu ECR
 resource "aws_iam_role_policy_attachment" "ecr_power_user" {
   role       = aws_iam_role.github_actions_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPowerUser"
+}
+
+# 7. Outputs para consulta
+output "ecr_repository_url" {
+  value = aws_ecr_repository.poc_app_db_secrets_repo.repository_url
+}
+
+output "github_role_arn" {
+  description = "ARN que você deve colar no seu deploy.yml"
+  value       = aws_iam_role.github_actions_role.arn
 }

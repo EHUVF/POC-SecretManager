@@ -1,45 +1,46 @@
-name: Deploy POC App
+name: Deploy Final POC
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
 
 env:
   AWS_REGION: us-east-1
-  AWS_ACCOUNT: 745364136706
-  ECR_REPOSITORY: poc-app-db-secrets-repo # O nome que definimos no Terraform
-  IMAGE_NAME: app-db-secrets-poc
+  AWS_ACCOUNT: 263611243832
+  ECR_REPOSITORY: poc-app-db-secrets-repo
+  CLUSTER_NAME: poc-cluster # Certifique-se de que este cluster exista no ECS
+  SERVICE_NAME: poc-service # O nome do seu serviço no ECS
 
 permissions:
   contents: read
-  id-token: write # Necessário para o OIDC assumir a Role da Bayer
+  id-token: write # Necessário para o OIDC
 
 jobs:
   deploy:
-    runs-on: windows-latest # Usamos o runner padrão do GitHub
+    runs-on: windows-latest # Mantive windows-latest pela sua aplicação .NET
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 1. Autenticação usando a Role homologada da Bayer
+      # 1. Autenticação via OIDC (Sem chaves fixas!)
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{env.AWS_ACCOUNT}}:role/SC-745364136706-pp-fljbn32a2uoju-Role-D1QA6ZS0U1A3
+          role-to-assume: arn:aws:iam::263611243832:role/poc-github-actions-role
           aws-region: ${{ env.AWS_REGION }}
 
       # 2. Login no ECR
       - name: Login to Amazon ECR
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 3. Build da imagem
-      - name: Build Docker Image
+      # 3. Build e Push da imagem
+      - name: Build, Tag, and Push to ECR
         run: |
           docker build -t ${{ env.ECR_REPOSITORY }} .
-
-      # 4. Tag e Push para o ECR
-      - name: Push to ECR
-        run: |
           docker tag ${{ env.ECR_REPOSITORY }}:latest ${{ env.AWS_ACCOUNT }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
           docker push ${{ env.AWS_ACCOUNT }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:latest
+
+      # 4. Deploy no ECS Fargate (Force new deployment)
+      - name: Deploy to Amazon ECS
+        run: |
+          aws ecs update-service --cluster ${{ env.CLUSTER_NAME }} --service ${{ env.SERVICE_NAME }} --force-new-deployment
